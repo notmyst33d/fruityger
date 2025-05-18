@@ -1,0 +1,4 @@
+namespace = "fruityger"
+
+[parse.expand]
+crates = ["fruityger"]
