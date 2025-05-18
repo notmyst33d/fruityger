@@ -1,12 +1,13 @@
 mod error;
 mod ffi;
 pub mod qobuz;
-mod remux;
+pub mod remux;
 pub mod yandex;
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
+use reqwest::header;
 use serde::Serialize;
 use std::pin::Pin;
 use tempfile::tempdir;
@@ -53,6 +54,13 @@ impl CoverFormat {
             CoverFormat::Jpg => "jpg",
         }
     }
+
+    pub fn mime_type(&self) -> &'static str {
+        match self {
+            CoverFormat::Png => "image/png",
+            CoverFormat::Jpg => "image/jpeg",
+        }
+    }
 }
 
 impl AudioFormat {
@@ -79,6 +87,14 @@ impl AudioFormat {
             AudioFormat::Aac(bitrate) => *bitrate,
         }
     }
+
+    pub fn mime_type(&self) -> &'static str {
+        match self {
+            AudioFormat::Flac => "audio/flac",
+            AudioFormat::Mp3(_) => "audio/mpeg",
+            AudioFormat::Aac(_) => "audio/mp4",
+        }
+    }
 }
 
 impl Into<String> for &AudioFormat {
@@ -96,7 +112,7 @@ pub struct SearchResults {
     pub tracks: Vec<Track>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Track {
     pub id: String,
     pub url: String,
@@ -106,14 +122,14 @@ pub struct Track {
     pub cover_url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Artist {
     pub id: String,
     pub name: String,
 }
 
 #[async_trait]
-pub trait Module {
+pub trait Module: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn url_supported(&self, url: &str) -> bool;
@@ -146,6 +162,16 @@ impl Client {
     pub fn add_module(&mut self, module: impl Module + 'static) {
         self.modules.push(Box::new(module));
     }
+
+    pub fn module_exists(&self, module_name: &str) -> bool {
+        for module in &self.modules {
+            if module.name() == module_name {
+                return true;
+            }
+        }
+        false
+    }
+
     pub async fn download(&self, url: &str) -> Result<(AudioFormat, BytesStream), Error> {
         for module in &self.modules {
             if !module.url_supported(url) {
@@ -154,6 +180,34 @@ impl Client {
             return module.download(url).await;
         }
         Err(Error::NoAvailableModules)
+    }
+
+    pub async fn download_cover(&self, url: &str) -> Result<(CoverFormat, BytesStream), Error> {
+        let mut response = reqwest::Client::new().get(url).send().await?;
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/jpeg");
+        let format = match content_type {
+            "image/jpeg" => CoverFormat::Jpg,
+            "image/png" => CoverFormat::Png,
+            _ => return Err(Error::ServiceError("unsupported format".to_string())),
+        };
+        let (tx, rx) = mpsc::channel(16);
+        let stream = ReceiverStream::new(rx);
+        tokio::task::spawn(async move {
+            while let Ok(chunk) = response.chunk().await {
+                if let Some(chunk) = chunk {
+                    if let Err(_) = tx.send(Ok(chunk)).await {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+        Ok((format, Box::pin(stream)))
     }
 
     pub async fn search(
