@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2025 Myst33d
+// Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,7 @@ use crate::{
 #[serde(untagged)]
 enum ApiResponse<T> {
     Ok(T),
-    Err { status: String, message: String },
+    Err { message: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,8 +51,6 @@ struct Performer {
 
 #[derive(Debug, Deserialize)]
 struct Album {
-    id: String,
-    title: String,
     image: Image,
 }
 
@@ -156,7 +154,7 @@ impl Module for Qobuz {
             ("sample", "false".to_string()),
             ("track_id", track_id.to_string()),
             ("request_ts", ts.to_string()),
-            ("request_sig", "".to_string()),
+            ("request_sig", String::new()),
         ];
         query[5].1 = {
             let mut h = Md5::new();
@@ -198,35 +196,35 @@ impl Module for Qobuz {
     }
 }
 
-impl Into<Result<SearchResults, Error>> for ApiResponse<SearchResponse> {
-    fn into(self) -> Result<SearchResults, Error> {
-        match self {
+impl From<ApiResponse<SearchResponse>> for Result<SearchResults, Error> {
+    fn from(value: ApiResponse<SearchResponse>) -> Self {
+        match value {
             ApiResponse::Ok(v) => Ok(v.into()),
             ApiResponse::Err { message, .. } => Err(Error::ServiceError(message)),
         }
     }
 }
 
-impl Into<crate::SearchResults> for SearchResponse {
-    fn into(self) -> crate::SearchResults {
-        crate::SearchResults {
-            tracks: self.tracks.items.into_iter().map(Track::into).collect(),
+impl From<SearchResponse> for crate::SearchResults {
+    fn from(value: SearchResponse) -> Self {
+        Self {
+            tracks: value.tracks.items.into_iter().map(Track::into).collect(),
         }
     }
 }
 
-impl Into<crate::Track> for Track {
-    fn into(self) -> crate::Track {
-        crate::Track {
-            id: self.id.to_string(),
-            url: format!("https://open.qobuz.com/track/{}", self.id),
-            title: self.title,
-            duration_ms: self.duration * 1000,
+impl From<Track> for crate::Track {
+    fn from(value: Track) -> Self {
+        Self {
+            id: value.id.to_string(),
+            url: format!("https://open.qobuz.com/track/{}", value.id),
+            title: value.title,
+            duration_ms: value.duration * 1000,
             artists: vec![crate::Artist {
-                id: self.performer.id.to_string(),
-                name: self.performer.name,
+                id: value.performer.id.to_string(),
+                name: value.performer.name,
             }],
-            cover_url: self.album.image.large,
+            cover_url: value.album.image.large,
         }
     }
 }

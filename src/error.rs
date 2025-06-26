@@ -1,15 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2025 Myst33d
-
-macro_rules! transparent_from_error {
-    ($into:ty, $from:ty) => {
-        impl From<$from> for $into {
-            fn from(value: $from) -> Self {
-                <$from>::from(value).into()
-            }
-        }
-    };
-}
+// Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
 #[derive(thiserror::Error, Debug)]
 pub enum UrlError {
@@ -47,4 +37,8 @@ pub enum Error {
     ServiceError(String),
 }
 
-transparent_from_error!(Error, url::ParseError);
+impl From<url::ParseError> for Error {
+    fn from(value: url::ParseError) -> Self {
+        Self::UrlError(UrlError::ParseError(value))
+    }
+}

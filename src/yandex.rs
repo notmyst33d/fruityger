@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2025 Myst33d
+// Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,7 @@ use crate::{
 
 type HmacSha256 = Hmac<Sha256>;
 
-const SIGN_KEY: &'static [u8] = b"kzqU4XhfCaY6B6JTHODeq5";
+const SIGN_KEY: &[u8] = b"kzqU4XhfCaY6B6JTHODeq5";
 
 #[derive(Clone)]
 pub struct Yandex {
@@ -166,7 +166,7 @@ impl Module for Yandex {
             ("quality", "lossless".to_string()),
             ("codecs", "flac,flac-mp4,aac,aac-mp4,mp3".to_string()),
             ("transports", "raw".to_string()),
-            ("sign", "".to_string()),
+            ("sign", String::new()),
         ];
         query[5].1 = {
             let mut h = HmacSha256::new_from_slice(SIGN_KEY).unwrap();
@@ -176,8 +176,8 @@ impl Module for Yandex {
                     query[0].1,
                     query[1].1,
                     query[2].1,
-                    query[3].1.replace(",", ""),
-                    query[4].1.replace(",", "")
+                    query[3].1.replace(',', ""),
+                    query[4].1.replace(',', "")
                 )
                 .as_bytes(),
             );
@@ -185,7 +185,7 @@ impl Module for Yandex {
         };
 
         let response = self
-            .builder(Method::GET, format!("/get-file-info"))
+            .builder(Method::GET, "/get-file-info")
             .query(&query)
             .send()
             .await?
@@ -219,10 +219,10 @@ impl Module for Yandex {
     }
 }
 
-impl Into<SearchResults> for ApiResponse<SearchResponse> {
-    fn into(self) -> SearchResults {
-        SearchResults {
-            tracks: self
+impl From<ApiResponse<SearchResponse>> for SearchResults {
+    fn from(value: ApiResponse<SearchResponse>) -> Self {
+        Self {
+            tracks: value
                 .result
                 .tracks
                 .results
@@ -233,27 +233,27 @@ impl Into<SearchResults> for ApiResponse<SearchResponse> {
     }
 }
 
-impl Into<crate::Track> for Track {
-    fn into(self) -> crate::Track {
-        crate::Track {
-            id: self.id.to_string(),
+impl From<Track> for crate::Track {
+    fn from(value: Track) -> Self {
+        Self {
+            id: value.id.to_string(),
             url: format!(
                 "https://music.yandex.ru/album/{}/track/{}",
-                self.albums[0].id, self.id
+                value.albums[0].id, value.id
             ),
-            title: self.title,
-            duration_ms: self.duration_ms,
-            artists: self.artists.into_iter().map(Artist::into).collect(),
-            cover_url: format!("https://{}", self.cover_uri.replace("%%", "orig")),
+            title: value.title,
+            duration_ms: value.duration_ms,
+            artists: value.artists.into_iter().map(Artist::into).collect(),
+            cover_url: format!("https://{}", value.cover_uri.replace("%%", "orig")),
         }
     }
 }
 
-impl Into<crate::Artist> for Artist {
-    fn into(self) -> crate::Artist {
-        crate::Artist {
-            id: self.id.to_string(),
-            name: self.name,
+impl From<Artist> for crate::Artist {
+    fn from(value: Artist) -> Self {
+        Self {
+            id: value.id.to_string(),
+            name: value.name,
         }
     }
 }
