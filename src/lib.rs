@@ -203,14 +203,14 @@ impl Client {
 
     pub async fn remux(
         &self,
-        workdir: &PathBuf,
-        filename: &str,
+        workdir: &Path,
+        filename_without_ext: &str,
         audio: (AudioFormat, PathBuf),
-        cover: (CoverFormat, PathBuf),
+        cover: &Path,
         metadata: Metadata,
     ) -> Result<(AudioFormat, PathBuf), Error> {
-        let out = workdir.join(filename);
-        remux::remux(audio.1, cover.1, &out, metadata)?;
+        let out = workdir.join(format!("{filename_without_ext}.{}", audio.0.extension()));
+        remux::remux(&audio.1, cover, &out, metadata)?;
         Ok((audio.0, out))
     }
 }

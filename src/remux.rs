@@ -24,9 +24,9 @@ pub struct Metadata {
 }
 
 pub(crate) fn remux(
-    input_audio: impl AsRef<Path>,
-    input_cover: impl AsRef<Path>,
-    output: impl AsRef<Path>,
+    input_audio: &Path,
+    input_cover: &Path,
+    output: &Path,
     metadata: Metadata,
 ) -> Result<(), ffmpeg_next::Error> {
     let mut input_audio = format::input(&input_audio)?;
