@@ -9,8 +9,10 @@ pub mod yandex;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use futures::TryStreamExt;
 use reqwest::header;
 use serde::Serialize;
+use tokio::fs::File;
 
 pub use crate::{error::Error, remux::Metadata};
 
@@ -161,6 +163,7 @@ impl Client {
     pub async fn download_cover(
         &self,
         workdir: &Path,
+        filename_without_ext: &str,
         url: &str,
     ) -> Result<(CoverFormat, PathBuf), Error> {
         let response = reqwest::Client::new().get(url).send().await?;
@@ -174,8 +177,13 @@ impl Client {
             "image/png" => CoverFormat::Png,
             _ => return Err(Error::ServiceError("unsupported format".to_string())),
         };
-        let cover_file = workdir.join(format!("cover.{}", format.extension()));
-        Ok((format, cover_file))
+        let cover = workdir.join(format!("{filename_without_ext}.{}", format.extension()));
+        let mut stream = response.bytes_stream();
+        let mut file = File::create(&cover).await?;
+        while let Some(chunk) = stream.try_next().await? {
+            tokio::io::copy(&mut chunk.as_ref(), &mut file).await?;
+        }
+        Ok((format, cover))
     }
 
     pub async fn search(
