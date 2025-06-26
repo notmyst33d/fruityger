@@ -151,7 +151,7 @@ impl Module for Qobuz {
             .ok_or(Error::UrlError(UrlError::InvalidPathError))?;
         let ts = Utc::now().timestamp();
         let mut query = [
-            ("format_id", "27".to_string()),
+            ("format_id", "6".to_string()),
             ("intent", "stream".to_string()),
             ("sample", "false".to_string()),
             ("track_id", track_id.to_string()),
