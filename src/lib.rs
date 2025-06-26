@@ -3,20 +3,16 @@
 
 mod error;
 pub mod qobuz;
-pub mod remux;
+mod remux;
 pub mod yandex;
 
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
-use bytes::Bytes;
 use reqwest::header;
 use serde::Serialize;
-use tempfile::tempdir;
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
 
-use crate::{error::Error, remux::Metadata};
+pub use crate::{error::Error, remux::Metadata};
 
 #[macro_export]
 macro_rules! const_headers {
@@ -108,7 +104,12 @@ pub trait Module: Send + Sync {
 
     async fn search(&self, query: &str, page: usize) -> Result<SearchResults, Error>;
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error>;
+    async fn download(
+        &self,
+        workdir: &Path,
+        filename: &str,
+        url: &str,
+    ) -> Result<(AudioFormat, PathBuf), Error>;
 
     fn box_clone(&self) -> Box<dyn Module>;
 }
@@ -142,17 +143,26 @@ impl Client {
         false
     }
 
-    pub async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
+    pub async fn download(
+        &self,
+        workdir: &Path,
+        filename: &str,
+        url: &str,
+    ) -> Result<(AudioFormat, PathBuf), Error> {
         for module in &self.modules {
             if !module.url_supported(url) {
                 continue;
             }
-            return module.download(url).await;
+            return module.download(workdir, filename, url).await;
         }
         Err(Error::NoAvailableModules)
     }
 
-    pub async fn download_cover(&self, url: &str) -> Result<(CoverFormat, Bytes), Error> {
+    pub async fn download_cover(
+        &self,
+        workdir: &Path,
+        url: &str,
+    ) -> Result<(CoverFormat, PathBuf), Error> {
         let response = reqwest::Client::new().get(url).send().await?;
         let content_type = response
             .headers()
@@ -164,7 +174,8 @@ impl Client {
             "image/png" => CoverFormat::Png,
             _ => return Err(Error::ServiceError("unsupported format".to_string())),
         };
-        Ok((format, response.bytes().await?))
+        let cover_file = workdir.join(format!("cover.{}", format.extension()));
+        Ok((format, cover_file))
     }
 
     pub async fn search(
@@ -184,30 +195,14 @@ impl Client {
 
     pub async fn remux(
         &self,
-        audio: (AudioFormat, Bytes),
-        cover: (CoverFormat, Bytes),
+        workdir: &PathBuf,
+        filename: &str,
+        audio: (AudioFormat, PathBuf),
+        cover: (CoverFormat, PathBuf),
         metadata: Metadata,
-    ) -> Result<(AudioFormat, Bytes), Error> {
-        let temp_dir = tempdir()?;
-        let input_audio = temp_dir
-            .path()
-            .join(format!("audio.{}", audio.0.extension()));
-        let mut input_audio_file = File::create(&input_audio).await?;
-        input_audio_file.write_all(&audio.1).await?;
-
-        let input_cover = temp_dir
-            .path()
-            .join(format!("cover.{}", cover.0.extension()));
-        let mut input_cover_file = File::create(&input_cover).await?;
-        input_cover_file.write_all(&cover.1).await?;
-
-        let out = temp_dir.path().join(format!("out.{}", audio.0.extension()));
-        remux::remux(input_audio, input_cover, &out, metadata)?;
-
-        Ok((audio.0, {
-            let mut b = vec![];
-            File::open(out).await?.read_to_end(&mut b).await?;
-            b.into()
-        }))
+    ) -> Result<(AudioFormat, PathBuf), Error> {
+        let out = workdir.join(filename);
+        remux::remux(audio.1, cover.1, &out, metadata)?;
+        Ok((audio.0, out))
     }
 }

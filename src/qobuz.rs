@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2025 Myst33d
 
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
-use bytes::Bytes;
 use chrono::Utc;
+use futures::TryStreamExt;
 use md5::{Digest, Md5};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use serde::Deserialize;
+use tokio::fs::File;
 use url::Url;
 
 use crate::{
@@ -16,7 +19,7 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub enum ApiResponse<T> {
+enum ApiResponse<T> {
     Ok(T),
     Err { status: String, message: String },
 }
@@ -46,7 +49,6 @@ struct Performer {
     name: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Album {
     id: String,
@@ -94,7 +96,7 @@ impl Qobuz {
         }
     }
 
-    pub fn builder(&self, method: Method, url: impl Into<String>) -> RequestBuilder {
+    fn builder(&self, method: Method, url: impl Into<String>) -> RequestBuilder {
         self.client
             .request(
                 method,
@@ -134,7 +136,12 @@ impl Module for Qobuz {
         response.json::<ApiResponse<SearchResponse>>().await?.into()
     }
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
+    async fn download(
+        &self,
+        workdir: &Path,
+        filename: &str,
+        url: &str,
+    ) -> Result<(AudioFormat, PathBuf), Error> {
         let url = Url::parse(url)?;
         let mut it = url
             .path_segments()
@@ -176,8 +183,14 @@ impl Module for Qobuz {
             _ => return Err(Error::UnsupportedCodecError),
         };
 
-        let response = self.client.get(response.url).send().await?;
-        Ok((format, response.bytes().await?))
+        let mut stream = self.client.get(response.url).send().await?.bytes_stream();
+
+        let out = workdir.join(filename);
+        let mut file = File::create(&out).await?;
+        while let Some(chunk) = stream.try_next().await? {
+            tokio::io::copy(&mut chunk.as_ref(), &mut file).await?;
+        }
+        Ok((format, out))
     }
 
     fn box_clone(&self) -> Box<dyn Module> {
@@ -220,17 +233,23 @@ impl Into<crate::Track> for Track {
 
 #[cfg(test)]
 mod test {
+    use std::path::Path;
+
     use crate::{Module, qobuz::Qobuz};
 
     #[tokio::test]
     async fn all() {
         let query = std::env::var("QOBUZ_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Qobuz::new(
-            std::env::var("QOBUZ_TOKEN").expect("token is required to test this module"),
-            std::env::var("QOBUZ_APP_ID").expect("app_id is required to test this module"),
-            std::env::var("QOBUZ_APP_SECRET").expect("app_secret is required to test this module"),
+            std::env::var("QOBUZ_TOKEN").expect("QOBUZ_TOKEN is required to test this module"),
+            std::env::var("QOBUZ_APP_ID").expect("QOBUZ_APP_ID is required to test this module"),
+            std::env::var("QOBUZ_APP_SECRET")
+                .expect("QOBUZ_APP_SECRET is required to test this module"),
         );
         let results = client.search(&query, 0).await.unwrap();
-        let _ = client.download(&results.tracks[0].url).await.unwrap();
+        let _ = client
+            .download(Path::new("."), "qobuz_audio.flac", &results.tracks[0].url)
+            .await
+            .unwrap();
     }
 }

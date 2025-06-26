@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2025 Myst33d
 
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
-use bytes::Bytes;
 use chrono::Utc;
+use futures::TryStreamExt;
 use hmac::{Hmac, Mac};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
+use tokio::fs::File;
 use url::Url;
 
 use crate::{
@@ -141,7 +144,12 @@ impl Module for Yandex {
         Ok(data.into())
     }
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
+    async fn download(
+        &self,
+        workdir: &Path,
+        filename: &str,
+        url: &str,
+    ) -> Result<(AudioFormat, PathBuf), Error> {
         let url = Url::parse(url)?;
         let mut it = url
             .path_segments()
@@ -191,13 +199,19 @@ impl Module for Yandex {
             _ => return Err(Error::UnsupportedCodecError),
         };
 
-        let response = self
+        let mut stream = self
             .client
             .get(response.result.download_info.url)
             .send()
-            .await?;
+            .await?
+            .bytes_stream();
 
-        Ok((format, response.bytes().await?))
+        let out = workdir.join(filename);
+        let mut file = File::create(&out).await?;
+        while let Some(chunk) = stream.try_next().await? {
+            tokio::io::copy(&mut chunk.as_ref(), &mut file).await?;
+        }
+        Ok((format, out))
     }
 
     fn box_clone(&self) -> Box<dyn Module> {
@@ -246,15 +260,20 @@ impl Into<crate::Artist> for Artist {
 
 #[cfg(test)]
 mod test {
+    use std::path::Path;
+
     use crate::{Module, yandex::Yandex};
 
     #[tokio::test]
     async fn all() {
         let query = std::env::var("YANDEX_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Yandex::new(
-            std::env::var("YANDEX_TOKEN").expect("token is required to test this module"),
+            std::env::var("YANDEX_TOKEN").expect("YANDEX_TOKEN is required to test this module"),
         );
         let results = client.search(&query, 0).await.unwrap();
-        let _ = client.download(&results.tracks[0].url).await.unwrap();
+        let _ = client
+            .download(Path::new("."), "yandex_audio.flac", &results.tracks[0].url)
+            .await
+            .unwrap();
     }
 }

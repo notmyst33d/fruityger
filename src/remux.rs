@@ -23,7 +23,7 @@ pub struct Metadata {
     pub track: Option<String>,
 }
 
-pub fn remux(
+pub(crate) fn remux(
     input_audio: impl AsRef<Path>,
     input_cover: impl AsRef<Path>,
     output: impl AsRef<Path>,
