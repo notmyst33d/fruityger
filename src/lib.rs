@@ -107,7 +107,7 @@ pub trait Module: Send + Sync {
     async fn download(
         &self,
         workdir: &Path,
-        filename: &str,
+        filename_without_ext: &str,
         url: &str,
     ) -> Result<(AudioFormat, PathBuf), Error>;
 
@@ -146,14 +146,14 @@ impl Client {
     pub async fn download(
         &self,
         workdir: &Path,
-        filename: &str,
+        filename_without_ext: &str,
         url: &str,
     ) -> Result<(AudioFormat, PathBuf), Error> {
         for module in &self.modules {
             if !module.url_supported(url) {
                 continue;
             }
-            return module.download(workdir, filename, url).await;
+            return module.download(workdir, filename_without_ext, url).await;
         }
         Err(Error::NoAvailableModules)
     }

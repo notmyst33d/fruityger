@@ -147,7 +147,7 @@ impl Module for Yandex {
     async fn download(
         &self,
         workdir: &Path,
-        filename: &str,
+        filename_without_ext: &str,
         url: &str,
     ) -> Result<(AudioFormat, PathBuf), Error> {
         let url = Url::parse(url)?;
@@ -206,7 +206,7 @@ impl Module for Yandex {
             .await?
             .bytes_stream();
 
-        let out = workdir.join(filename);
+        let out = workdir.join(format!("{filename_without_ext}.{}", format.extension()));
         let mut file = File::create(&out).await?;
         while let Some(chunk) = stream.try_next().await? {
             tokio::io::copy(&mut chunk.as_ref(), &mut file).await?;
@@ -272,7 +272,7 @@ mod test {
         );
         let results = client.search(&query, 0).await.unwrap();
         let _ = client
-            .download(Path::new("."), "yandex_audio.flac", &results.tracks[0].url)
+            .download(Path::new("."), "yandex_audio", &results.tracks[0].url)
             .await
             .unwrap();
     }
