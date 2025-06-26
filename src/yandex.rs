@@ -1,17 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2025 Myst33d
+
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
+use bytes::Bytes;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use url::Url;
 
 use crate::{
-    AudioFormat, BytesStream, Module, SearchResults, const_headers,
+    AudioFormat, Module, SearchResults, const_headers,
     error::{Error, UrlError},
 };
 
@@ -136,11 +138,10 @@ impl Module for Yandex {
             .await?;
         let value = serde_json::from_str::<Value>(&text)?;
         let data = serde_json::from_value::<ApiResponse<SearchResponse>>(value)?;
-        log::debug!("/search -> {data:#?}");
         Ok(data.into())
     }
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, BytesStream), Error> {
+    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
         let url = Url::parse(url)?;
         let mut it = url
             .path_segments()
@@ -183,8 +184,6 @@ impl Module for Yandex {
             .json::<ApiResponse<GetFileInfoResponse>>()
             .await?;
 
-        log::debug!("/get-file-info -> {response:#?}");
-
         let format = match response.result.download_info.codec.as_str() {
             "mp3" => AudioFormat::Mp3(response.result.download_info.bitrate),
             "aac-mp4" => AudioFormat::Aac(response.result.download_info.bitrate),
@@ -192,26 +191,13 @@ impl Module for Yandex {
             _ => return Err(Error::UnsupportedCodecError),
         };
 
-        let mut response = self
+        let response = self
             .client
             .get(response.result.download_info.url)
             .send()
             .await?;
 
-        let (tx, rx) = mpsc::channel(16);
-        tokio::task::spawn(async move {
-            while let Ok(chunk) = response.chunk().await {
-                if let Some(chunk) = chunk {
-                    if let Err(_) = tx.send(Ok(chunk)).await {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        });
-
-        Ok((format, Box::pin(ReceiverStream::new(rx))))
+        Ok((format, response.bytes().await?))
     }
 
     fn box_clone(&self) -> Box<dyn Module> {
@@ -260,29 +246,15 @@ impl Into<crate::Artist> for Artist {
 
 #[cfg(test)]
 mod test {
-    use bytes::BytesMut;
-    use futures::StreamExt;
-
     use crate::{Module, yandex::Yandex};
 
     #[tokio::test]
     async fn all() {
-        simple_logger::init().unwrap();
         let query = std::env::var("YANDEX_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Yandex::new(
             std::env::var("YANDEX_TOKEN").expect("token is required to test this module"),
         );
         let results = client.search(&query, 0).await.unwrap();
-        let track = &results.tracks[0];
-        let (format, mut stream) = client.download(&track.url).await.unwrap();
-        log::info!(
-            "downloading {} - {} with format {format:?}",
-            track.artists[0].name,
-            track.title
-        );
-        let mut data = BytesMut::new();
-        while let Some(chunk) = stream.next().await {
-            data.extend_from_slice(&chunk.unwrap());
-        }
+        let _ = client.download(&results.tracks[0].url).await.unwrap();
     }
 }

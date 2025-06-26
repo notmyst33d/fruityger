@@ -1,14 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2025 Myst33d
+
 use async_trait::async_trait;
+use bytes::Bytes;
 use chrono::Utc;
 use md5::{Digest, Md5};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use serde::Deserialize;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use url::Url;
 
 use crate::{
-    AudioFormat, BytesStream, Module, SearchResults, const_headers,
+    AudioFormat, Module, SearchResults, const_headers,
     error::{Error, UrlError},
 };
 
@@ -132,7 +134,7 @@ impl Module for Qobuz {
         response.json::<ApiResponse<SearchResponse>>().await?.into()
     }
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, BytesStream), Error> {
+    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
         let url = Url::parse(url)?;
         let mut it = url
             .path_segments()
@@ -174,22 +176,8 @@ impl Module for Qobuz {
             _ => return Err(Error::UnsupportedCodecError),
         };
 
-        let mut response = self.client.get(response.url).send().await?;
-
-        let (tx, rx) = mpsc::channel(16);
-        tokio::task::spawn(async move {
-            while let Ok(chunk) = response.chunk().await {
-                if let Some(chunk) = chunk {
-                    if let Err(_) = tx.send(Ok(chunk)).await {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        });
-
-        Ok((format, Box::pin(ReceiverStream::new(rx))))
+        let response = self.client.get(response.url).send().await?;
+        Ok((format, response.bytes().await?))
     }
 
     fn box_clone(&self) -> Box<dyn Module> {
@@ -236,7 +224,6 @@ mod test {
 
     #[tokio::test]
     async fn all() {
-        simple_logger::init().unwrap();
         let query = std::env::var("QOBUZ_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Qobuz::new(
             std::env::var("QOBUZ_TOKEN").expect("token is required to test this module"),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2025 Myst33d
+
 use ffmpeg_next::{Dictionary, codec, encoder, ffi::AV_DISPOSITION_ATTACHED_PIC, format, media};
 use serde::Deserialize;
 use std::path::Path;

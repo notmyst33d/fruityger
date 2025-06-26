@@ -1,22 +1,20 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2025 Myst33d
+
 mod error;
-mod ffi;
 pub mod qobuz;
 pub mod remux;
 pub mod yandex;
 
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use bytes::Bytes;
 use reqwest::header;
 use serde::Serialize;
-use std::pin::Pin;
 use tempfile::tempdir;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
-    sync::mpsc,
+    io::{AsyncReadExt, AsyncWriteExt},
 };
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{error::Error, remux::Metadata};
 
@@ -31,8 +29,6 @@ macro_rules! const_headers {
         headers
     }};
 }
-
-pub type BytesStream = Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send>>;
 
 #[derive(Debug, Serialize, Clone)]
 pub enum AudioFormat {
@@ -72,37 +68,11 @@ impl AudioFormat {
         }
     }
 
-    pub fn name(&self) -> &'static str {
-        match self {
-            AudioFormat::Flac => "flac",
-            AudioFormat::Mp3(_) => "mp3",
-            AudioFormat::Aac(_) => "aac",
-        }
-    }
-
-    pub fn bitrate(&self) -> u16 {
-        match self {
-            AudioFormat::Flac => 0,
-            AudioFormat::Mp3(bitrate) => *bitrate,
-            AudioFormat::Aac(bitrate) => *bitrate,
-        }
-    }
-
     pub fn mime_type(&self) -> &'static str {
         match self {
             AudioFormat::Flac => "audio/flac",
             AudioFormat::Mp3(_) => "audio/mpeg",
             AudioFormat::Aac(_) => "audio/mp4",
-        }
-    }
-}
-
-impl Into<String> for &AudioFormat {
-    fn into(self) -> String {
-        match self {
-            AudioFormat::Flac => String::from(self.name()),
-            AudioFormat::Mp3(bitrate) => format!("{}_{bitrate}", self.name()),
-            AudioFormat::Aac(bitrate) => format!("{}_{bitrate}", self.name()),
         }
     }
 }
@@ -138,7 +108,7 @@ pub trait Module: Send + Sync {
 
     async fn search(&self, query: &str, page: usize) -> Result<SearchResults, Error>;
 
-    async fn download(&self, url: &str) -> Result<(AudioFormat, BytesStream), Error>;
+    async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error>;
 
     fn box_clone(&self) -> Box<dyn Module>;
 }
@@ -172,7 +142,7 @@ impl Client {
         false
     }
 
-    pub async fn download(&self, url: &str) -> Result<(AudioFormat, BytesStream), Error> {
+    pub async fn download(&self, url: &str) -> Result<(AudioFormat, Bytes), Error> {
         for module in &self.modules {
             if !module.url_supported(url) {
                 continue;
@@ -182,8 +152,8 @@ impl Client {
         Err(Error::NoAvailableModules)
     }
 
-    pub async fn download_cover(&self, url: &str) -> Result<(CoverFormat, BytesStream), Error> {
-        let mut response = reqwest::Client::new().get(url).send().await?;
+    pub async fn download_cover(&self, url: &str) -> Result<(CoverFormat, Bytes), Error> {
+        let response = reqwest::Client::new().get(url).send().await?;
         let content_type = response
             .headers()
             .get(header::CONTENT_TYPE)
@@ -194,20 +164,7 @@ impl Client {
             "image/png" => CoverFormat::Png,
             _ => return Err(Error::ServiceError("unsupported format".to_string())),
         };
-        let (tx, rx) = mpsc::channel(16);
-        let stream = ReceiverStream::new(rx);
-        tokio::task::spawn(async move {
-            while let Ok(chunk) = response.chunk().await {
-                if let Some(chunk) = chunk {
-                    if let Err(_) = tx.send(Ok(chunk)).await {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        });
-        Ok((format, Box::pin(stream)))
+        Ok((format, response.bytes().await?))
     }
 
     pub async fn search(
@@ -227,41 +184,30 @@ impl Client {
 
     pub async fn remux(
         &self,
-        mut audio: (AudioFormat, BytesStream),
-        mut cover: (CoverFormat, BytesStream),
+        audio: (AudioFormat, Bytes),
+        cover: (CoverFormat, Bytes),
         metadata: Metadata,
-    ) -> Result<(AudioFormat, BytesStream), Error> {
+    ) -> Result<(AudioFormat, Bytes), Error> {
         let temp_dir = tempdir()?;
         let input_audio = temp_dir
             .path()
             .join(format!("audio.{}", audio.0.extension()));
         let mut input_audio_file = File::create(&input_audio).await?;
-        while let Some(chunk) = audio.1.next().await {
-            input_audio_file.write_all(&chunk?).await?;
-        }
+        input_audio_file.write_all(&audio.1).await?;
 
         let input_cover = temp_dir
             .path()
             .join(format!("cover.{}", cover.0.extension()));
         let mut input_cover_file = File::create(&input_cover).await?;
-        while let Some(chunk) = cover.1.next().await {
-            input_cover_file.write_all(&chunk?).await?;
-        }
+        input_cover_file.write_all(&cover.1).await?;
 
         let out = temp_dir.path().join(format!("out.{}", audio.0.extension()));
         remux::remux(input_audio, input_cover, &out, metadata)?;
 
-        let out_file = File::open(out).await?;
-        let (tx, rx) = mpsc::channel(16);
-        tokio::task::spawn(async move {
-            let mut reader = BufReader::new(out_file);
-            let mut bytes = BytesMut::zeroed(65535);
-            while reader.read(&mut bytes).await.unwrap_or(0) != 0 {
-                let _ = tx.send(Ok(bytes.freeze())).await;
-                bytes = BytesMut::zeroed(65535);
-            }
-        });
-
-        Ok((audio.0, Box::pin(ReceiverStream::new(rx))))
+        Ok((audio.0, {
+            let mut b = vec![];
+            File::open(out).await?.read_to_end(&mut b).await?;
+            b.into()
+        }))
     }
 }
