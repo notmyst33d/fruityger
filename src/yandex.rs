@@ -26,6 +26,14 @@ pub struct Config {
     token: String,
 }
 
+impl Config {
+    pub async fn from_env() -> Result<Self, Error> {
+        Ok(Config {
+            token: std::env::var("YANDEX_TOKEN")?,
+        })
+    }
+}
+
 impl Yandex {
     pub fn new(config: Config) -> Self {
         Self {
