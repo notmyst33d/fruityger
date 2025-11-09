@@ -1,44 +1,49 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
-#[derive(thiserror::Error, Debug)]
-pub enum UrlError {
-    #[error(transparent)]
-    ParseError(#[from] url::ParseError),
-
-    #[error("invalid path")]
-    InvalidPathError,
+#[derive(Debug)]
+pub struct Error {
+    kind: ErrorKind,
+    error: Box<dyn std::error::Error + Send + Sync>,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error(transparent)]
-    ConnectionError(#[from] reqwest::Error),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-
-    #[error(transparent)]
-    RemuxError(#[from] ffmpeg_next::Error),
-
-    #[error(transparent)]
-    UrlError(#[from] UrlError),
-
-    #[error(transparent)]
-    DeserializationError(#[from] serde_json::Error),
-
-    #[error("unsupported codec")]
-    UnsupportedCodecError,
-
-    #[error("no available modules")]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    ServiceError,
+    RemuxError,
+    InvalidUrlError,
     NoAvailableModules,
-
-    #[error("service error")]
-    ServiceError(String),
+    UnsupportedCodecError,
+    Other,
 }
 
-impl From<url::ParseError> for Error {
-    fn from(value: url::ParseError) -> Self {
-        Self::UrlError(UrlError::ParseError(value))
+impl<E> From<E> for Error
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(value: E) -> Self {
+        Self {
+            kind: ErrorKind::Other,
+            error: Box::new(value),
+        }
+    }
+}
+
+impl From<ErrorKind> for Error {
+    fn from(value: ErrorKind) -> Self {
+        Self {
+            kind: value,
+            error: Box::from(""),
+        }
+    }
+}
+
+impl Error {
+    pub fn new(kind: ErrorKind, err: &str) -> Self {
+        Self {
+            kind,
+            error: Box::from(err),
+        }
     }
 }

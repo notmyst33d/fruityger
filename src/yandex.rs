@@ -1,24 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
-use std::path::{Path, PathBuf};
-
-use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
 use chrono::Utc;
-use futures::TryStreamExt;
 use hmac::{Hmac, Mac};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
-use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
-use tokio::fs::File;
 use url::Url;
 
-use crate::{
-    AudioFormat, Module, SearchResults, const_headers,
-    error::{Error, UrlError},
-};
+use crate::{AudioFormat, AudioStream, Error, ErrorKind, SearchResults, const_headers};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -27,62 +18,16 @@ const SIGN_KEY: &[u8] = b"kzqU4XhfCaY6B6JTHODeq5";
 #[derive(Clone)]
 pub struct Yandex {
     client: reqwest::Client,
+    config: Config,
+}
+
+#[derive(Clone)]
+pub struct Config {
     token: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ApiResponse<T> {
-    pub result: T,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    pub tracks: TracksData,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetFileInfoResponse {
-    pub download_info: DownloadInfo,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DownloadInfo {
-    pub codec: String,
-    pub bitrate: u16,
-    pub url: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct TracksData {
-    pub results: Vec<Track>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Track {
-    pub id: u64,
-    pub title: String,
-    pub duration_ms: usize,
-    pub artists: Vec<Artist>,
-    pub albums: Vec<Album>,
-    pub cover_uri: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct Album {
-    pub id: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct Artist {
-    pub id: u64,
-    pub name: String,
-}
-
 impl Yandex {
-    pub fn new(token: String) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             client: Client::builder()
                 .redirect(Policy::none())
@@ -92,42 +37,23 @@ impl Yandex {
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) YandexMusic/5.18.2 Chrome/122.0.6261.156 Electron/29.4.6 Safari/537.36")
                 .build()
                 .unwrap(),
-            token,
+            config,
         }
     }
 
-    pub fn builder(&self, method: Method, url: impl Into<String>) -> RequestBuilder {
+    fn builder<S: AsRef<str>>(&self, method: Method, url: S) -> RequestBuilder {
         self.client
             .request(
                 method,
                 Url::parse("https://api.music.yandex.net")
                     .unwrap()
-                    .join(&url.into())
+                    .join(url.as_ref())
                     .unwrap(),
             )
-            .header("authorization", format!("OAuth {}", self.token))
-    }
-}
-
-#[async_trait]
-impl Module for Yandex {
-    fn name(&self) -> &'static str {
-        "yandex"
+            .header("authorization", format!("OAuth {}", self.config.token))
     }
 
-    fn url_supported(&self, url: &str) -> bool {
-        url.contains("music.yandex.ru")
-    }
-
-    fn supported_formats(&self) -> &'static [AudioFormat] {
-        &[
-            AudioFormat::Mp3(128),
-            AudioFormat::Aac(256),
-            AudioFormat::Flac,
-        ]
-    }
-
-    async fn search(&self, query: &str, page: usize) -> Result<SearchResults, Error> {
+    pub async fn search(&self, query: &str, page: usize) -> Result<SearchResults, Error> {
         let text = self
             .builder(Method::GET, "/search")
             .query(&[
@@ -140,24 +66,19 @@ impl Module for Yandex {
             .text()
             .await?;
         let value = serde_json::from_str::<Value>(&text)?;
-        let data = serde_json::from_value::<ApiResponse<SearchResponse>>(value)?;
+        let data = serde_json::from_value::<data::ApiResponse<data::SearchResponse>>(value)?;
         Ok(data.into())
     }
 
-    async fn download(
-        &self,
-        workdir: &Path,
-        filename_without_ext: &str,
-        url: &str,
-    ) -> Result<(AudioFormat, PathBuf), Error> {
+    pub async fn get_stream(&self, url: &str) -> Result<AudioStream, Error> {
         let url = Url::parse(url)?;
         let mut it = url
             .path_segments()
-            .ok_or(Error::UrlError(UrlError::InvalidPathError))?;
+            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
         let track_id = it
             .nth(3)
             .and_then(|s| s.parse::<u64>().ok())
-            .ok_or(Error::UrlError(UrlError::InvalidPathError))?;
+            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
 
         let ts = Utc::now().timestamp();
         let mut query = [
@@ -189,71 +110,118 @@ impl Module for Yandex {
             .query(&query)
             .send()
             .await?
-            .json::<ApiResponse<GetFileInfoResponse>>()
+            .json::<data::ApiResponse<data::GetFileInfoResponse>>()
             .await?;
 
         let format = match response.result.download_info.codec.as_str() {
             "mp3" => AudioFormat::Mp3(response.result.download_info.bitrate),
             "aac-mp4" => AudioFormat::Aac(response.result.download_info.bitrate),
             "flac-mp4" => AudioFormat::Flac,
-            _ => return Err(Error::UnsupportedCodecError),
+            _ => return Err(ErrorKind::UnsupportedCodecError.into()),
         };
 
-        let mut stream = self
-            .client
-            .get(response.result.download_info.url)
-            .send()
-            .await?
-            .bytes_stream();
-
-        let out = workdir.join(format!("{filename_without_ext}.{}", format.extension()));
-        let mut file = File::create(&out).await?;
-        while let Some(chunk) = stream.try_next().await? {
-            tokio::io::copy(&mut chunk.as_ref(), &mut file).await?;
-        }
-        Ok((format, out))
-    }
-
-    fn box_clone(&self) -> Box<dyn Module> {
-        Box::new((*self).clone())
+        Ok(AudioStream {
+            response: self
+                .client
+                .get(response.result.download_info.url)
+                .send()
+                .await?,
+            format,
+        })
     }
 }
 
-impl From<ApiResponse<SearchResponse>> for SearchResults {
-    fn from(value: ApiResponse<SearchResponse>) -> Self {
-        Self {
-            tracks: value
-                .result
-                .tracks
-                .results
-                .into_iter()
-                .map(Track::into)
-                .collect(),
+mod data {
+    use crate::SearchResults;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    pub struct ApiResponse<T> {
+        pub result: T,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct SearchResponse {
+        pub tracks: TracksData,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct GetFileInfoResponse {
+        pub download_info: DownloadInfo,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct DownloadInfo {
+        pub codec: String,
+        pub bitrate: u16,
+        pub url: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct TracksData {
+        pub results: Vec<Track>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Track {
+        pub id: u64,
+        pub title: String,
+        pub duration_ms: usize,
+        pub artists: Vec<Artist>,
+        pub albums: Vec<Album>,
+        pub cover_uri: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Album {
+        pub id: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Artist {
+        pub id: u64,
+        pub name: String,
+    }
+
+    impl From<ApiResponse<SearchResponse>> for SearchResults {
+        fn from(value: ApiResponse<SearchResponse>) -> Self {
+            Self {
+                tracks: value
+                    .result
+                    .tracks
+                    .results
+                    .into_iter()
+                    .map(Track::into)
+                    .collect(),
+            }
         }
     }
-}
 
-impl From<Track> for crate::Track {
-    fn from(value: Track) -> Self {
-        Self {
-            id: value.id.to_string(),
-            url: format!(
-                "https://music.yandex.ru/album/{}/track/{}",
-                value.albums[0].id, value.id
-            ),
-            title: value.title,
-            duration_ms: value.duration_ms,
-            artists: value.artists.into_iter().map(Artist::into).collect(),
-            cover_url: format!("https://{}", value.cover_uri.replace("%%", "orig")),
+    impl From<Track> for crate::Track {
+        fn from(value: Track) -> Self {
+            Self {
+                id: value.id.to_string(),
+                url: format!(
+                    "https://music.yandex.ru/album/{}/track/{}",
+                    value.albums[0].id, value.id
+                ),
+                title: value.title,
+                duration_ms: value.duration_ms,
+                artists: value.artists.into_iter().map(Artist::into).collect(),
+                cover_url: format!("https://{}", value.cover_uri.replace("%%", "orig")),
+            }
         }
     }
-}
 
-impl From<Artist> for crate::Artist {
-    fn from(value: Artist) -> Self {
-        Self {
-            id: value.id.to_string(),
-            name: value.name,
+    impl From<Artist> for crate::Artist {
+        fn from(value: Artist) -> Self {
+            Self {
+                id: value.id.to_string(),
+                name: value.name,
+            }
         }
     }
 }
@@ -262,17 +230,21 @@ impl From<Artist> for crate::Artist {
 mod test {
     use std::path::Path;
 
-    use crate::{Module, yandex::Yandex};
+    use crate::{
+        save_audio_stream,
+        yandex::{Config, Yandex},
+    };
 
     #[tokio::test]
     async fn all() {
         let query = std::env::var("YANDEX_QUERY").unwrap_or("periphery scarlet".to_string());
-        let client = Yandex::new(
-            std::env::var("YANDEX_TOKEN").expect("YANDEX_TOKEN is required to test this module"),
-        );
+        let client = Yandex::new(Config {
+            token: std::env::var("YANDEX_TOKEN")
+                .expect("YANDEX_TOKEN is required to test this module"),
+        });
         let results = client.search(&query, 0).await.unwrap();
-        let _ = client
-            .download(Path::new("."), "yandex_audio", &results.tracks[0].url)
+        let stream = client.get_stream(&results.tracks[0].url).await.unwrap();
+        save_audio_stream(stream, Path::new("/tmp"), "yandex_test")
             .await
             .unwrap();
     }
