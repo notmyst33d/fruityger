@@ -27,7 +27,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub async fn from_env() -> Result<Self, Error> {
+    pub fn from_env() -> Result<Self, Error> {
         Ok(Config {
             token: std::env::var("YANDEX_TOKEN")?,
         })
@@ -78,20 +78,11 @@ impl Yandex {
         Ok(data.into())
     }
 
-    pub async fn get_stream(&self, url: &str) -> Result<AudioStream, Error> {
-        let url = Url::parse(url)?;
-        let mut it = url
-            .path_segments()
-            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
-        let track_id = it
-            .nth(3)
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
-
+    pub async fn get_stream(&self, id: &str) -> Result<AudioStream, Error> {
         let ts = Utc::now().timestamp();
         let mut query = [
             ("ts", ts.to_string()),
-            ("trackId", track_id.to_string()),
+            ("trackId", id.to_string()),
             ("quality", "lossless".to_string()),
             ("codecs", "flac,flac-mp4,aac,aac-mp4,mp3".to_string()),
             ("transports", "raw".to_string()),

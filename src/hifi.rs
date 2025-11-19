@@ -74,18 +74,12 @@ impl Hifi {
         Ok(response.json::<data::SearchResponse>().await?.into())
     }
 
-    pub async fn get_stream(&self, url: &str) -> Result<AudioStream, Error> {
-        let url = Url::parse(url)?;
-        let mut it = url
-            .path_segments()
-            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
-        let track_id = it.nth(1).ok_or(Error::from(ErrorKind::InvalidUrlError))?;
-
+    pub async fn get_stream(&self, id: &str) -> Result<AudioStream, Error> {
         let response = self
             .try_send(|url| {
                 Ok(self
                     .builder(url, Method::GET, "/track/")?
-                    .query(&[("id", track_id), ("quality", "LOSSLESS")]))
+                    .query(&[("id", id), ("quality", "LOSSLESS")]))
             })
             .await?
             .json::<Vec<Value>>()

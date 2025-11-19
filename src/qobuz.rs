@@ -68,18 +68,13 @@ impl Qobuz {
             .into()
     }
 
-    pub async fn get_stream(&self, url: &str) -> Result<AudioStream, Error> {
-        let url = Url::parse(url)?;
-        let mut it = url
-            .path_segments()
-            .ok_or(Error::from(ErrorKind::InvalidUrlError))?;
-        let track_id = it.nth(1).ok_or(Error::from(ErrorKind::InvalidUrlError))?;
+    pub async fn get_stream(&self, id: &str) -> Result<AudioStream, Error> {
         let ts = Utc::now().timestamp();
         let mut query = [
             ("format_id", "6".to_string()),
             ("intent", "stream".to_string()),
             ("sample", "false".to_string()),
-            ("track_id", track_id.to_string()),
+            ("track_id", id.to_string()),
             ("request_ts", ts.to_string()),
             ("request_sig", String::new()),
         ];
