@@ -28,7 +28,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, Error> {
         Ok(Config {
-            token: std::env::var("YANDEX_TOKEN")?,
+            token: std::env::var("FRUITYGER_YANDEX_MUSIC_TOKEN")?,
         })
     }
 }
