@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2025 Myst33d <myst33d@gmail.com>
+
 use crate::error::Error;
 
 pub trait Format {

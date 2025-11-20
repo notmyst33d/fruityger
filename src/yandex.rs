@@ -6,6 +6,7 @@ use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
 use url::Url;
@@ -20,17 +21,9 @@ pub struct Yandex {
     config: Config,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     token: String,
-}
-
-impl Config {
-    pub fn from_env() -> Result<Self, Error> {
-        Ok(Config {
-            token: std::env::var("FRUITYGER_YANDEX_MUSIC_TOKEN")?,
-        })
-    }
 }
 
 impl Yandex {
@@ -226,19 +219,19 @@ mod data {
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
-
     use crate::{
         save_audio_stream,
         yandex::{Config, Yandex},
     };
+    use std::path::Path;
 
     #[tokio::test]
     async fn all() {
-        let query = std::env::var("YANDEX_QUERY").unwrap_or("periphery scarlet".to_string());
+        let query =
+            std::env::var("FRUITYGER_YANDEX_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Yandex::new(Config {
-            token: std::env::var("YANDEX_TOKEN")
-                .expect("YANDEX_TOKEN is required to test this module"),
+            token: std::env::var("FRUITYGER_YANDEX_TOKEN")
+                .expect("FRUITYGER_YANDEX_TOKEN is required to test this module"),
         });
         let results = client.search(&query, 0).await.unwrap();
         let stream = client.get_stream(&results.tracks[0].id).await.unwrap();

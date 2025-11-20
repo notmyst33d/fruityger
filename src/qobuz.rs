@@ -5,6 +5,7 @@ use crate::{AudioFormat, AudioStream, Error, SearchResults, const_headers};
 use chrono::Utc;
 use md5::{Digest, Md5};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
+use serde::Deserialize;
 use url::Url;
 
 #[derive(Clone)]
@@ -13,7 +14,7 @@ pub struct Qobuz {
     config: Config,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     token: String,
     app_id: String,
@@ -204,23 +205,22 @@ mod data {
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
-
     use crate::{
         qobuz::{Config, Qobuz},
         save_audio_stream,
     };
+    use std::path::Path;
 
     #[tokio::test]
     async fn all() {
-        let query = std::env::var("QOBUZ_QUERY").unwrap_or("periphery scarlet".to_string());
+        let query = std::env::var("FRUITYGER_QOBUZ_QUERY").unwrap_or("periphery scarlet".to_string());
         let client = Qobuz::new(Config {
-            token: std::env::var("QOBUZ_TOKEN")
-                .expect("QOBUZ_TOKEN is required to test this module"),
-            app_id: std::env::var("QOBUZ_APP_ID")
-                .expect("QOBUZ_APP_ID is required to test this module"),
-            app_secret: std::env::var("QOBUZ_APP_SECRET")
-                .expect("QOBUZ_APP_SECRET is required to test this module"),
+            token: std::env::var("FRUITYGER_QOBUZ_TOKEN")
+                .expect("FRUITYGER_QOBUZ_TOKEN is required to test this module"),
+            app_id: std::env::var("FRUITYGER_QOBUZ_APP_ID")
+                .expect("FRUITYGER_QOBUZ_APP_ID is required to test this module"),
+            app_secret: std::env::var("FRUITYGER_QOBUZ_APP_SECRET")
+                .expect("FRUITYGER_QOBUZ_APP_SECRET is required to test this module"),
         });
         let results = client.search(&query, 0).await.unwrap();
         let stream = client.get_stream(&results.tracks[0].id).await.unwrap();

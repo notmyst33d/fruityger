@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
-use std::path::Path;
-
 use crate::{AudioFormat, AudioStream, Error, SearchResults};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::fs;
 use url::Url;
 
 #[derive(Clone)]
@@ -17,19 +14,12 @@ pub struct Hifi {
 }
 
 #[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Host {
     base_url: String,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct Config(pub Vec<Host>);
-
-impl Config {
-    pub async fn from_file<P: AsRef<Path>>(path: P) -> Result<Config, Error> {
-        Ok(serde_json::from_slice(fs::read(path).await?.as_slice())?)
-    }
-}
 
 impl Hifi {
     pub fn new(config: Config) -> Self {
@@ -179,20 +169,20 @@ mod data {
 
 #[cfg(test)]
 mod test {
+    use crate::{hifi::Hifi, save_audio_stream, save_cover};
     use std::path::Path;
-
-    use crate::{
-        hifi::{Config, Hifi},
-        save_audio_stream, save_cover,
-    };
+    use tokio::fs;
 
     #[tokio::test]
     async fn all() {
-        let query = std::env::var("HIFI_QUERY").unwrap_or("periphery scarlet".to_owned());
+        let query = std::env::var("FRUITYGER_HIFI_QUERY").unwrap_or("periphery scarlet".to_owned());
         let client = Hifi::new(
-            Config::from_file(std::env::var("HIFI_CONFIG").unwrap_or("config.json".to_owned()))
-                .await
-                .unwrap(),
+            serde_json::from_slice(
+                &fs::read(std::env::var("FRUITYGER_HIFI_CONFIG").unwrap_or("config.json".to_owned()))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap(),
         );
         let results = client.search(&query, 0).await.unwrap();
         let track = &results.tracks[0];
