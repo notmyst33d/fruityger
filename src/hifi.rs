@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::{AudioFormat, AudioStream, Error, ErrorKind, SearchResults};
+use crate::{AudioFormat, AudioStream, Error, SearchResults};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,9 +17,13 @@ pub struct Hifi {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct Config {
-    urls: Vec<String>,
+#[serde(rename_all = "camelCase")]
+pub struct Host {
+    base_url: String,
 }
+
+#[derive(Clone, Deserialize)]
+pub struct Config(pub Vec<Host>);
 
 impl Config {
     pub async fn from_file<P: AsRef<Path>>(path: P) -> Result<Config, Error> {
@@ -50,17 +54,14 @@ impl Hifi {
         &self,
         build_request: impl Fn(&str) -> Result<RequestBuilder, Error>,
     ) -> Result<Response, Error> {
-        for url in &self.config.urls {
-            if let Ok(response) = build_request(url)?.send().await
+        for host in &self.config.0 {
+            if let Ok(response) = build_request(&host.base_url)?.send().await
                 && response.status() == StatusCode::OK
             {
                 return Ok(response);
             }
         }
-        Err(Error::new(
-            ErrorKind::ServiceError,
-            "cannot find usable server",
-        ))
+        Err(Error::ServiceError("cannot find usable server".to_owned()))
     }
 
     pub async fn search(&self, query: &str, _page: usize) -> Result<SearchResults, Error> {
@@ -89,9 +90,8 @@ impl Hifi {
             .get(2)
             .and_then(|v| serde_json::from_value::<data::TrackResponse>(v.clone()).ok())
         else {
-            return Err(Error::new(
-                ErrorKind::ServiceError,
-                "service did not return valid json",
+            return Err(Error::ServiceError(
+                "service did not return valid json".to_owned(),
             ));
         };
 
@@ -196,7 +196,7 @@ mod test {
         );
         let results = client.search(&query, 0).await.unwrap();
         let track = &results.tracks[0];
-        let stream = client.get_stream(&track.url).await.unwrap();
+        let stream = client.get_stream(&track.id).await.unwrap();
         let _ = save_audio_stream(stream, Path::new("/tmp"), "hifi_test")
             .await
             .unwrap();

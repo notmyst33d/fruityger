@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
+use crate::{AudioFormat, AudioStream, Error, SearchResults, const_headers};
 use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -8,8 +9,6 @@ use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use serde_json::Value;
 use sha2::Sha256;
 use url::Url;
-
-use crate::{AudioFormat, AudioStream, Error, ErrorKind, SearchResults, const_headers};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -116,7 +115,7 @@ impl Yandex {
             "mp3" => AudioFormat::Mp3(response.result.download_info.bitrate),
             "aac-mp4" => AudioFormat::Aac(response.result.download_info.bitrate),
             "flac-mp4" => AudioFormat::Flac,
-            _ => return Err(ErrorKind::UnsupportedCodecError.into()),
+            _ => return Err(Error::UnsupportedFormatError),
         };
 
         Ok(AudioStream {
@@ -242,7 +241,7 @@ mod test {
                 .expect("YANDEX_TOKEN is required to test this module"),
         });
         let results = client.search(&query, 0).await.unwrap();
-        let stream = client.get_stream(&results.tracks[0].url).await.unwrap();
+        let stream = client.get_stream(&results.tracks[0].id).await.unwrap();
         save_audio_stream(stream, Path::new("/tmp"), "yandex_test")
             .await
             .unwrap();

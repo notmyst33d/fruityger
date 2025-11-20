@@ -1,49 +1,34 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
-#[derive(Debug)]
-pub struct Error {
-    kind: ErrorKind,
-    error: Box<dyn std::error::Error + Send + Sync>,
-}
+use thiserror::Error;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum ErrorKind {
-    ServiceError,
-    RemuxError,
-    InvalidUrlError,
-    NoAvailableModules,
-    UnsupportedCodecError,
-    Other,
-}
+pub enum Error {
+    // Library errors
+    #[error("service error: {0}")]
+    ServiceError(String),
 
-impl<E> From<E> for Error
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    fn from(value: E) -> Self {
-        Self {
-            kind: ErrorKind::Other,
-            error: Box::new(value),
-        }
-    }
-}
+    #[error("unsupported format")]
+    UnsupportedFormatError,
 
-impl From<ErrorKind> for Error {
-    fn from(value: ErrorKind) -> Self {
-        Self {
-            kind: value,
-            error: Box::from(""),
-        }
-    }
-}
+    // Foreign errors
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 
-impl Error {
-    pub fn new(kind: ErrorKind, err: &str) -> Self {
-        Self {
-            kind,
-            error: Box::from(err),
-        }
-    }
+    #[error(transparent)]
+    RemuxError(#[from] ffmpeg_next::Error),
+
+    #[error(transparent)]
+    JsonDeserializationError(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    RequestError(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    UrlParseError(#[from] url::ParseError),
+
+    #[error(transparent)]
+    EnvError(#[from] std::env::VarError),
 }

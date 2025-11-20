@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2025 Myst33d <myst33d@gmail.com>
 
+use crate::{AudioFormat, AudioStream, Error, SearchResults, const_headers};
 use chrono::Utc;
 use md5::{Digest, Md5};
 use reqwest::{Client, Method, RequestBuilder, redirect::Policy};
 use url::Url;
-
-use crate::{AudioFormat, AudioStream, Error, ErrorKind, SearchResults, const_headers};
 
 #[derive(Clone)]
 pub struct Qobuz {
@@ -96,17 +95,17 @@ impl Qobuz {
         {
             data::ApiResponse::Ok(v) => v,
             data::ApiResponse::Err { message, .. } => {
-                return Err(Error::new(ErrorKind::ServiceError, &message));
+                return Err(Error::ServiceError(message));
             }
         };
 
         if response.sample {
-            return Err(Error::new(ErrorKind::ServiceError, "cannot get full song"));
+            return Err(Error::ServiceError("cannot get full song".to_owned()));
         }
 
         let format = match response.mime_type.as_str() {
             "audio/flac" => AudioFormat::Flac,
-            _ => return Err(Error::new(ErrorKind::UnsupportedCodecError, "")),
+            _ => return Err(Error::UnsupportedFormatError),
         };
 
         Ok(AudioStream {
@@ -117,10 +116,7 @@ impl Qobuz {
 }
 
 mod data {
-    use crate::{
-        SearchResults,
-        error::{Error, ErrorKind},
-    };
+    use crate::{SearchResults, error::Error};
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
@@ -176,9 +172,7 @@ mod data {
         fn from(value: ApiResponse<SearchResponse>) -> Self {
             match value {
                 ApiResponse::Ok(v) => Ok(v.into()),
-                ApiResponse::Err { message, .. } => {
-                    Err(Error::new(ErrorKind::ServiceError, &message))
-                }
+                ApiResponse::Err { message, .. } => Err(Error::ServiceError(message)),
             }
         }
     }
@@ -229,7 +223,7 @@ mod test {
                 .expect("QOBUZ_APP_SECRET is required to test this module"),
         });
         let results = client.search(&query, 0).await.unwrap();
-        let stream = client.get_stream(&results.tracks[0].url).await.unwrap();
+        let stream = client.get_stream(&results.tracks[0].id).await.unwrap();
         save_audio_stream(stream, Path::new("/tmp"), "qobuz_test")
             .await
             .unwrap();

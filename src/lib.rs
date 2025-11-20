@@ -17,10 +17,11 @@ use ffmpeg_next::{
 };
 use futures::TryStreamExt;
 use reqwest::{Response, header};
+use serde::Serialize;
 use tokio::fs::File;
 
 use crate::{
-    error::{Error, ErrorKind},
+    error::Error,
     format::{AudioFormat, CoverFormat, Format},
 };
 
@@ -69,7 +70,7 @@ pub struct SearchResults {
     pub tracks: Vec<Track>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Track {
     pub id: String,
     pub url: String,
@@ -79,7 +80,7 @@ pub struct Track {
     pub cover_url: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Artist {
     pub id: String,
     pub name: String,
@@ -123,7 +124,7 @@ pub fn remux(
             }
             return Ok((stream.index(), output_stream.index()));
         }
-        Err(Error::new(ErrorKind::RemuxError, "cannot find stream"))
+        Err(Error::RemuxError(ffmpeg_next::Error::StreamNotFound))
     };
 
     let (input_audio_index, output_audio_index) =
@@ -175,7 +176,11 @@ pub fn remux(
     Ok(output_path)
 }
 
-pub async fn save_cover(response: Response, dir: &Path, filename: &str) -> Result<PathBuf, Error> {
+pub async fn save_cover(
+    response: Response,
+    dir: &Path,
+    filename: &str,
+) -> Result<(PathBuf, CoverFormat), Error> {
     let format = CoverFormat::try_from(
         response
             .headers()
@@ -185,7 +190,7 @@ pub async fn save_cover(response: Response, dir: &Path, filename: &str) -> Resul
     )?;
     let path = dir.join(format!("{}.{}", filename, format.extension()));
     save(response, &path).await?;
-    Ok(path)
+    Ok((path, format))
 }
 
 pub async fn save_audio_stream(
@@ -198,7 +203,7 @@ pub async fn save_audio_stream(
     Ok(path)
 }
 
-async fn save(response: Response, path: &Path) -> Result<(), Error> {
+pub async fn save(response: Response, path: &Path) -> Result<(), Error> {
     let mut stream = response.bytes_stream();
     let mut file = File::create(path).await?;
     while let Some(chunk) = stream.try_next().await? {
